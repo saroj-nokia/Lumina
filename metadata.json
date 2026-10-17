@@ -1,0 +1,6 @@
+{
+  "name": "Lumina",
+  "description": "Native Android wallpaper app powered by Wallhaven, with Material 3 dynamic color, offline favorites, and direct home and lock screen wallpaper setting.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
