@@ -5,7 +5,7 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 
-@Database(entities = [WallpaperEntity::class], version = 1, exportSchema = false)
+@Database(entities = [WallpaperEntity::class], version = 2, exportSchema = false)
 abstract class WallpaperDatabase : RoomDatabase() {
 
     abstract fun wallpaperDao(): WallpaperDao
@@ -20,7 +20,9 @@ abstract class WallpaperDatabase : RoomDatabase() {
                     context.applicationContext,
                     WallpaperDatabase::class.java,
                     "lumina_wallpapers.db"
-                ).build()
+                )
+                    .fallbackToDestructiveMigration()
+                    .build()
                 INSTANCE = instance
                 instance
             }
