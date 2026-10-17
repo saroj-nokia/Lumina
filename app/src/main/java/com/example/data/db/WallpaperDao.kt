@@ -18,6 +18,9 @@ interface WallpaperDao {
     @Query("SELECT EXISTS(SELECT 1 FROM favorite_wallpapers WHERE id = :id)")
     suspend fun isFavoriteDirect(id: String): Boolean
 
+    @Query("SELECT id FROM favorite_wallpapers WHERE id IN (:ids)")
+    suspend fun getFavoriteIds(ids: List<String>): List<String>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertFavorite(wallpaper: WallpaperEntity)
 

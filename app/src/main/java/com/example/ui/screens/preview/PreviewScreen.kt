@@ -77,10 +77,6 @@ fun PreviewScreen(
         onNavigateBack()
     }
 
-    LaunchedEffect(wallpaper) {
-        viewModel.setWallpaper(wallpaper)
-    }
-
     LaunchedEffect(Unit) {
         viewModel.events.collect { event ->
             when (event) {

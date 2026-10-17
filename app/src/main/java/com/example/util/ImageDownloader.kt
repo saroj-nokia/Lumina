@@ -2,17 +2,17 @@ package com.example.util
 
 import android.content.ContentValues
 import android.content.Context
-import android.graphics.Bitmap
-import android.graphics.drawable.BitmapDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
-import coil.ImageLoader
-import coil.request.ImageRequest
-import coil.request.SuccessResult
+import com.example.LuminaApp
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import java.io.IOException
 
 object ImageDownloader {
 
@@ -21,26 +21,42 @@ object ImageDownloader {
         imageUrl: String,
         photoId: String
     ): Result<Uri> = withContext(Dispatchers.IO) {
-        try {
-            val imageLoader = ImageLoader(context)
-            val request = ImageRequest.Builder(context)
-                .data(imageUrl)
-                .allowHardware(false)
-                .build()
+        val appContext = context.applicationContext
+        val resolver = appContext.contentResolver
+        var insertedUri: Uri? = null
 
-            val result = imageLoader.execute(request)
-            if (result !is SuccessResult) {
-                return@withContext Result.failure(IllegalStateException("Failed to download image"))
+        try {
+            val okHttpClient = (appContext as? LuminaApp)?.okHttpClient ?: OkHttpClient()
+            val request = Request.Builder().url(imageUrl).build()
+            val response = okHttpClient.newCall(request).execute()
+
+            if (!response.isSuccessful) {
+                return@withContext Result.failure(IOException("Failed to download image: HTTP ${response.code}"))
             }
 
-            val bitmap = (result.drawable as? BitmapDrawable)?.bitmap
-                ?: return@withContext Result.failure(IllegalStateException("Failed to decode image"))
+            val body = response.body
+                ?: return@withContext Result.failure(IOException("Empty response body"))
 
-            val filename = "Lumina_Wallpaper_${photoId}_${System.currentTimeMillis()}.jpg"
+            val contentType = response.header("Content-Type")?.lowercase()
+            val (mimeType, extension) = when {
+                contentType?.contains("image/png") == true -> "image/png" to "png"
+                contentType?.contains("image/webp") == true -> "image/webp" to "webp"
+                contentType?.contains("image/jpeg") == true || contentType?.contains("image/jpg") == true -> "image/jpeg" to "jpg"
+                else -> {
+                    val urlExt = imageUrl.substringAfterLast('.', "").substringBefore('?').lowercase()
+                    when (urlExt) {
+                        "png" -> "image/png" to "png"
+                        "webp" -> "image/webp" to "webp"
+                        else -> "image/jpeg" to "jpg"
+                    }
+                }
+            }
+
+            val filename = "Lumina_Wallpaper_${photoId}_${System.currentTimeMillis()}.$extension"
 
             val values = ContentValues().apply {
                 put(MediaStore.Images.Media.DISPLAY_NAME, filename)
-                put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                put(MediaStore.Images.Media.MIME_TYPE, mimeType)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     put(
                         MediaStore.Images.Media.RELATIVE_PATH,
@@ -50,22 +66,48 @@ object ImageDownloader {
                 }
             }
 
-            val resolver = context.contentResolver
             val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
                 ?: return@withContext Result.failure(IllegalStateException("Could not create MediaStore entry"))
+            insertedUri = uri
 
-            resolver.openOutputStream(uri)?.use { stream ->
-                bitmap.compress(Bitmap.CompressFormat.JPEG, 95, stream)
-            } ?: return@withContext Result.failure(IllegalStateException("Could not open output stream"))
+            var streamSuccess = false
+            try {
+                resolver.openOutputStream(uri)?.use { outputStream ->
+                    body.byteStream().use { inputStream ->
+                        inputStream.copyTo(outputStream)
+                    }
+                } ?: throw IllegalStateException("Could not open output stream")
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                values.clear()
-                values.put(MediaStore.Images.Media.IS_PENDING, 0)
-                resolver.update(uri, values, null, null)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    values.clear()
+                    values.put(MediaStore.Images.Media.IS_PENDING, 0)
+                    resolver.update(uri, values, null, null)
+                }
+                streamSuccess = true
+                Result.success(uri)
+            } finally {
+                if (!streamSuccess) {
+                    try {
+                        resolver.delete(uri, null, null)
+                    } catch (_: Exception) {
+                    }
+                }
             }
-
-            Result.success(uri)
+        } catch (e: CancellationException) {
+            insertedUri?.let { uri ->
+                try {
+                    resolver.delete(uri, null, null)
+                } catch (_: Exception) {
+                }
+            }
+            throw e
         } catch (e: Exception) {
+            insertedUri?.let { uri ->
+                try {
+                    resolver.delete(uri, null, null)
+                } catch (_: Exception) {
+                }
+            }
             Result.failure(e)
         }
     }

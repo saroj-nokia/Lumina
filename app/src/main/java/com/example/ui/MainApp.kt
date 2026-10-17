@@ -1,8 +1,5 @@
 package com.example.ui
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.EnterTransition
-import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -20,19 +17,17 @@ import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
-import com.example.domain.model.Wallpaper
 import com.example.ui.navigation.Screen
 import com.example.ui.screens.favorites.FavoritesScreen
 import com.example.ui.screens.favorites.FavoritesViewModel
@@ -54,8 +49,6 @@ fun MainApp(
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
-
-    var selectedWallpaperForPreview by remember { mutableStateOf<Wallpaper?>(null) }
 
     val bottomNavItems = listOf(
         Screen.Home,
@@ -160,7 +153,7 @@ fun MainApp(
                         HomeScreen(
                             viewModel = homeViewModel,
                             onWallpaperClick = { wallpaper ->
-                                selectedWallpaperForPreview = wallpaper
+                                previewViewModel.setWallpaper(wallpaper)
                                 navController.navigate(Screen.Preview.route)
                             },
                             onOpenSettings = {
@@ -173,7 +166,7 @@ fun MainApp(
                         FavoritesScreen(
                             viewModel = favoritesViewModel,
                             onWallpaperClick = { wallpaper ->
-                                selectedWallpaperForPreview = wallpaper
+                                previewViewModel.setWallpaper(wallpaper)
                                 navController.navigate(Screen.Preview.route)
                             },
                             onExploreClick = {
@@ -193,16 +186,21 @@ fun MainApp(
                     }
 
                     composable(Screen.Preview.route) {
-                        selectedWallpaperForPreview?.let { wallpaper ->
+                        val previewState by previewViewModel.uiState.collectAsStateWithLifecycle()
+                        val currentWallpaper = previewState.wallpaper
+
+                        if (currentWallpaper != null) {
                             PreviewScreen(
-                                wallpaper = wallpaper,
+                                wallpaper = currentWallpaper,
                                 viewModel = previewViewModel,
                                 onNavigateBack = {
                                     navController.popBackStack()
                                 }
                             )
-                        } ?: run {
-                            navController.popBackStack()
+                        } else {
+                            LaunchedEffect(Unit) {
+                                navController.popBackStack()
+                            }
                         }
                     }
                 }

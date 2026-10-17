@@ -40,6 +40,7 @@ class HomeViewModel(
     val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
 
     private var searchJob: Job? = null
+    private var loadJob: Job? = null
 
     init {
         loadWallpapers(isInitial = true)
@@ -78,6 +79,7 @@ class HomeViewModel(
 
     fun onSortingSelected(sorting: WallpaperSorting) {
         if (_uiState.value.selectedSorting == sorting) return
+        searchJob?.cancel()
         _uiState.update {
             it.copy(
                 selectedSorting = sorting,
@@ -123,10 +125,17 @@ class HomeViewModel(
     }
 
     private fun loadWallpapers(isInitial: Boolean) {
-        viewModelScope.launch {
-            val state = _uiState.value
-            val targetPage = if (isInitial) 1 else state.currentPage + 1
+        if (isInitial) {
+            loadJob?.cancel()
+        }
 
+        val reqCategory = _uiState.value.selectedCategory
+        val reqQuery = _uiState.value.searchQuery.ifBlank { null }
+        val reqSorting = _uiState.value.selectedSorting
+        val reqSeed = if (reqSorting == WallpaperSorting.RANDOM) _uiState.value.randomSeed else null
+        val targetPage = if (isInitial) 1 else _uiState.value.currentPage + 1
+
+        loadJob = viewModelScope.launch {
             _uiState.update {
                 if (isInitial) {
                     it.copy(isLoading = true, error = null, isRateLimited = false)
@@ -136,16 +145,25 @@ class HomeViewModel(
             }
 
             val result = repository.getWallpapers(
-                category = state.selectedCategory,
-                customQuery = state.searchQuery.ifBlank { null },
-                sorting = state.selectedSorting,
+                category = reqCategory,
+                customQuery = reqQuery,
+                sorting = reqSorting,
                 page = targetPage,
-                seed = if (state.selectedSorting == WallpaperSorting.RANDOM) state.randomSeed else null
+                seed = reqSeed
             )
 
-            when (result) {
-                is WallpaperResult.Success -> {
-                    _uiState.update { current ->
+            _uiState.update { current ->
+                // Ensure a pending loadMore does not append results if initial load or filters changed
+                if (!isInitial && (
+                    current.selectedCategory != reqCategory ||
+                    current.searchQuery.ifBlank { null } != reqQuery ||
+                    current.selectedSorting != reqSorting
+                )) {
+                    return@update current.copy(isLoadingMore = false)
+                }
+
+                when (result) {
+                    is WallpaperResult.Success -> {
                         val newItems = if (isInitial) {
                             result.data
                         } else {
@@ -162,10 +180,8 @@ class HomeViewModel(
                             isRateLimited = false
                         )
                     }
-                }
-                is WallpaperResult.Error -> {
-                    _uiState.update {
-                        it.copy(
+                    is WallpaperResult.Error -> {
+                        current.copy(
                             isLoading = false,
                             isLoadingMore = false,
                             error = result.message,

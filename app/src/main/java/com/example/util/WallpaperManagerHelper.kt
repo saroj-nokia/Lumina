@@ -5,13 +5,13 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.drawable.BitmapDrawable
 import android.os.Build
-import coil.ImageLoader
+import coil.imageLoader
 import coil.request.ImageRequest
 import coil.request.SuccessResult
 import com.example.domain.model.WallpaperDestination
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlin.math.max
 
 object WallpaperManagerHelper {
 
@@ -21,9 +21,14 @@ object WallpaperManagerHelper {
         destination: WallpaperDestination
     ): Result<Unit> = withContext(Dispatchers.IO) {
         try {
-            val imageLoader = ImageLoader(context)
+            val displayMetrics = context.resources.displayMetrics
+            val screenWidth = displayMetrics.widthPixels
+            val screenHeight = displayMetrics.heightPixels
+
+            val imageLoader = context.applicationContext.imageLoader
             val request = ImageRequest.Builder(context)
                 .data(imageUrl)
+                .size(screenWidth, screenHeight)
                 .allowHardware(false)
                 .build()
 
@@ -35,11 +40,7 @@ object WallpaperManagerHelper {
             val sourceBitmap = (result.drawable as? BitmapDrawable)?.bitmap
                 ?: return@withContext Result.failure(IllegalStateException("Failed to decode bitmap."))
 
-            val displayMetrics = context.resources.displayMetrics
-            val screenWidth = max(displayMetrics.widthPixels, 1080)
-            val screenHeight = max(displayMetrics.heightPixels, 1920)
-
-            val scaledBitmap = cropAndScaleToScreen(sourceBitmap, screenWidth, screenHeight)
+            val finalBitmap = cropToScreenAspectRatio(sourceBitmap, screenWidth, screenHeight)
 
             val wm = WallpaperManager.getInstance(context)
 
@@ -50,22 +51,25 @@ object WallpaperManagerHelper {
             }
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                wm.setBitmap(scaledBitmap, null, true, flags)
+                wm.setBitmap(finalBitmap, null, true, flags)
             } else {
-                wm.setBitmap(scaledBitmap)
+                wm.setBitmap(finalBitmap)
             }
 
-            if (scaledBitmap != sourceBitmap && !scaledBitmap.isRecycled) {
-                scaledBitmap.recycle()
+            // Recycle only bitmaps this function created, never the Coil-owned source bitmap
+            if (finalBitmap !== sourceBitmap && !finalBitmap.isRecycled) {
+                finalBitmap.recycle()
             }
 
             Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Result.failure(e)
         }
     }
 
-    private fun cropAndScaleToScreen(source: Bitmap, targetWidth: Int, targetHeight: Int): Bitmap {
+    private fun cropToScreenAspectRatio(source: Bitmap, targetWidth: Int, targetHeight: Int): Bitmap {
         val targetAspect = targetWidth.toFloat() / targetHeight.toFloat()
         val sourceAspect = source.width.toFloat() / source.height.toFloat()
 
@@ -86,11 +90,10 @@ object WallpaperManagerHelper {
             cropY = (source.height - cropHeight) / 2
         }
 
-        val cropped = Bitmap.createBitmap(source, cropX, cropY, cropWidth, cropHeight)
-        return Bitmap.createScaledBitmap(cropped, targetWidth, targetHeight, true).also {
-            if (cropped != source && cropped != it && !cropped.isRecycled) {
-                cropped.recycle()
-            }
+        return if (cropWidth == source.width && cropHeight == source.height) {
+            source
+        } else {
+            Bitmap.createBitmap(source, cropX, cropY, cropWidth, cropHeight)
         }
     }
 }

@@ -27,11 +27,9 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
+        val app = application as LuminaApp
         val appPreferences = AppPreferences(applicationContext)
-        val database = WallpaperDatabase.getDatabase(applicationContext)
-        val repository = WallhavenWallpaperRepository(
-            wallpaperDao = database.wallpaperDao()
-        )
+        val repository = app.repository
 
         setContent {
             val themeMode by appPreferences.themeMode.collectAsStateWithLifecycle(initialValue = ThemeMode.SYSTEM)

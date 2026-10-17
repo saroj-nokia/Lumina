@@ -1,5 +1,6 @@
 package com.example.data.repository
 
+import android.util.LruCache
 import com.example.data.api.WallhavenApiService
 import com.example.data.api.dto.WallhavenItemDto
 import com.example.data.api.dto.WallhavenResponse
@@ -10,32 +11,23 @@ import com.example.domain.model.WallpaperCategory
 import com.example.domain.model.WallpaperSorting
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import okhttp3.OkHttpClient
-import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.HttpException
 import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
 import java.io.IOException
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.TimeUnit
 
 class WallhavenWallpaperRepository(
-    private val wallpaperDao: WallpaperDao
+    private val wallpaperDao: WallpaperDao,
+    private val okHttpClient: OkHttpClient
 ) : WallpaperRepository {
 
-    // In-memory cache for API query responses to respect 45 requests/minute rate limit
-    private val memoryCache = ConcurrentHashMap<String, WallhavenResponse>()
-
-    private val okHttpClient: OkHttpClient = OkHttpClient.Builder()
-        .addInterceptor(HttpLoggingInterceptor().apply {
-            level = HttpLoggingInterceptor.Level.BASIC
-        })
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(15, TimeUnit.SECONDS)
-        .build()
+    // LruCache holding at most 20 responses to respect 45 requests/minute rate limit
+    private val memoryCache = LruCache<String, WallhavenResponse>(20)
 
     private val moshi: Moshi = Moshi.Builder()
         .addLast(KotlinJsonAdapterFactory())
@@ -49,7 +41,9 @@ class WallhavenWallpaperRepository(
         .create(WallhavenApiService::class.java)
 
     override fun clearMemoryCache() {
-        memoryCache.clear()
+        synchronized(memoryCache) {
+            memoryCache.evictAll()
+        }
     }
 
     override suspend fun getWallpapers(
@@ -71,11 +65,12 @@ class WallhavenWallpaperRepository(
         val cacheKey = "q=${effectiveQuery ?: ""}&sort=${sorting.apiValue}&range=${topRange ?: ""}&p=$page&seed=${seed ?: ""}"
 
         // Return from memory cache if already fetched
-        val cached = memoryCache[cacheKey]
+        val cached = synchronized(memoryCache) { memoryCache.get(cacheKey) }
         if (cached != null) {
+            val photoIds = cached.data.map { it.id }
+            val favoriteIds = wallpaperDao.getFavoriteIds(photoIds).toSet()
             val wallpapers = cached.data.map { dto ->
-                val isFav = wallpaperDao.isFavoriteDirect(dto.id)
-                dto.toWallpaper(isFav)
+                dto.toWallpaper(isFav = favoriteIds.contains(dto.id))
             }
             return WallpaperResult.Success(
                 data = wallpapers,
@@ -105,11 +100,14 @@ class WallhavenWallpaperRepository(
                 )
 
                 // Cache successful response in memory
-                memoryCache[cacheKey] = response
+                synchronized(memoryCache) {
+                    memoryCache.put(cacheKey, response)
+                }
 
+                val photoIds = response.data.map { it.id }
+                val favoriteIds = wallpaperDao.getFavoriteIds(photoIds).toSet()
                 val wallpapers = response.data.map { dto ->
-                    val isFav = wallpaperDao.isFavoriteDirect(dto.id)
-                    dto.toWallpaper(isFav)
+                    dto.toWallpaper(isFav = favoriteIds.contains(dto.id))
                 }
 
                 return WallpaperResult.Success(
@@ -118,12 +116,15 @@ class WallhavenWallpaperRepository(
                     lastPage = response.meta.lastPage,
                     hasMore = response.meta.currentPage < response.meta.lastPage
                 )
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: HttpException) {
                 lastException = e
                 if (e.code() == 429) {
-                    // Rate limit hit (45 req/min) - perform backoff or return error
+                    // Rate limit hit (45 req/min) - exponential backoff: 1200ms, 2400ms
                     if (attempt < 3) {
-                        delay(1200L * attempt) // Exponential backoff
+                        val delayMs = 1200L * (1 shl (attempt - 1))
+                        delay(delayMs)
                         continue
                     }
                     return WallpaperResult.Error(
