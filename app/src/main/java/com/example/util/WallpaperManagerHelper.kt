@@ -8,6 +8,7 @@ import android.os.Build
 import coil.imageLoader
 import coil.request.ImageRequest
 import coil.request.SuccessResult
+import coil.size.Scale
 import com.example.domain.model.WallpaperDestination
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -21,14 +22,19 @@ object WallpaperManagerHelper {
         destination: WallpaperDestination
     ): Result<Unit> = withContext(Dispatchers.IO) {
         try {
+            val wm = WallpaperManager.getInstance(context)
             val displayMetrics = context.resources.displayMetrics
-            val screenWidth = displayMetrics.widthPixels
-            val screenHeight = displayMetrics.heightPixels
+            val desiredWidth = wm.desiredMinimumWidth
+            val desiredHeight = wm.desiredMinimumHeight
+
+            val targetWidth = if (desiredWidth > 0 && desiredHeight > 0) desiredWidth else displayMetrics.widthPixels
+            val targetHeight = if (desiredWidth > 0 && desiredHeight > 0) desiredHeight else displayMetrics.heightPixels
 
             val imageLoader = context.applicationContext.imageLoader
             val request = ImageRequest.Builder(context)
                 .data(imageUrl)
-                .size(screenWidth, screenHeight)
+                .size(targetWidth, targetHeight)
+                .scale(Scale.FILL)
                 .allowHardware(false)
                 .build()
 
@@ -40,9 +46,7 @@ object WallpaperManagerHelper {
             val sourceBitmap = (result.drawable as? BitmapDrawable)?.bitmap
                 ?: return@withContext Result.failure(IllegalStateException("Failed to decode bitmap."))
 
-            val finalBitmap = cropToScreenAspectRatio(sourceBitmap, screenWidth, screenHeight)
-
-            val wm = WallpaperManager.getInstance(context)
+            val finalBitmap = cropToScreenAspectRatio(sourceBitmap, targetWidth, targetHeight)
 
             val flags = when (destination) {
                 WallpaperDestination.HOME -> WallpaperManager.FLAG_SYSTEM
@@ -64,6 +68,8 @@ object WallpaperManagerHelper {
             Result.success(Unit)
         } catch (e: CancellationException) {
             throw e
+        } catch (e: OutOfMemoryError) {
+            Result.failure(IllegalStateException("This image is too large for your device"))
         } catch (e: Exception) {
             Result.failure(e)
         }

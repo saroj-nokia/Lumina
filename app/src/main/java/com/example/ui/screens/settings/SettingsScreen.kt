@@ -240,7 +240,7 @@ fun SettingsScreen(
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
-                            text = "No API key required • SFW General wallpapers filtered for phone displays",
+                            text = "No API key required • High-resolution SFW Wallhaven community wallpapers",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

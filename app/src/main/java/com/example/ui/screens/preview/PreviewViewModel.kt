@@ -52,7 +52,9 @@ class PreviewViewModel(
         _uiState.update {
             it.copy(
                 wallpaper = wallpaper,
-                isFavorite = wallpaper.isFavorite
+                isFavorite = wallpaper.isFavorite,
+                isChromeVisible = true,
+                showSetSheet = false
             )
         }
 

@@ -61,15 +61,19 @@ class WallhavenWallpaperRepository(
             else -> null
         }
 
-        val topRange = if (sorting == WallpaperSorting.TOPLIST) "1M" else null
+        val topRange = if (sorting == WallpaperSorting.TOPLIST) "1y" else null
         val cacheKey = "q=${effectiveQuery ?: ""}&sort=${sorting.apiValue}&range=${topRange ?: ""}&p=$page&seed=${seed ?: ""}"
 
         // Return from memory cache if already fetched
         val cached = synchronized(memoryCache) { memoryCache.get(cacheKey) }
         if (cached != null) {
-            val photoIds = cached.data.map { it.id }
+            val filteredList = cached.data.filter { dto ->
+                val ratio = if (dto.dimensionY > 0) dto.dimensionX.toFloat() / dto.dimensionY.toFloat() else 1.0f
+                ratio <= 2.4f
+            }
+            val photoIds = filteredList.map { it.id }
             val favoriteIds = wallpaperDao.getFavoriteIds(photoIds).toSet()
-            val wallpapers = cached.data.map { dto ->
+            val wallpapers = filteredList.map { dto ->
                 dto.toWallpaper(isFav = favoriteIds.contains(dto.id))
             }
             return WallpaperResult.Success(
@@ -89,12 +93,11 @@ class WallhavenWallpaperRepository(
             try {
                 val response = apiService.searchWallpapers(
                     query = effectiveQuery,
-                    categories = "100", // General only
+                    categories = "111", // General, anime, and people
                     purity = "100",     // SFW only
                     sorting = sorting.apiValue,
                     topRange = topRange,
                     atleast = "1080x1920",
-                    ratios = "9x16,9x19.5,9x20",
                     page = page,
                     seed = seed
                 )
@@ -104,9 +107,15 @@ class WallhavenWallpaperRepository(
                     memoryCache.put(cacheKey, response)
                 }
 
-                val photoIds = response.data.map { it.id }
+                // Filter out ultra-wide panoramas (> 2.4 aspect ratio)
+                val filteredList = response.data.filter { dto ->
+                    val ratio = if (dto.dimensionY > 0) dto.dimensionX.toFloat() / dto.dimensionY.toFloat() else 1.0f
+                    ratio <= 2.4f
+                }
+
+                val photoIds = filteredList.map { it.id }
                 val favoriteIds = wallpaperDao.getFavoriteIds(photoIds).toSet()
-                val wallpapers = response.data.map { dto ->
+                val wallpapers = filteredList.map { dto ->
                     dto.toWallpaper(isFav = favoriteIds.contains(dto.id))
                 }
 
