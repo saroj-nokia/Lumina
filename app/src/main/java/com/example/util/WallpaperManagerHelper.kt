@@ -3,68 +3,53 @@ package com.example.util
 import android.app.WallpaperManager
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.drawable.BitmapDrawable
-import android.os.Build
-import coil.imageLoader
-import coil.request.ImageRequest
-import coil.request.SuccessResult
-import coil.size.Scale
+import android.graphics.BitmapFactory
+import android.graphics.BitmapRegionDecoder
+import android.graphics.Rect
+import android.net.Uri
+import android.view.WindowManager
+import androidx.core.content.FileProvider
+import com.example.LuminaApp
 import com.example.domain.model.WallpaperDestination
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import java.io.File
+import java.io.IOException
+import kotlin.concurrent.thread
 
 object WallpaperManagerHelper {
+
+    private const val CACHE_DIR = "wallpapers"
+    private const val MAX_CACHE_AGE_MS = 24L * 60 * 60 * 1000
+
+    /** Portrait (width, height) in px of the whole display, whatever the rotation. */
+    fun targetSize(context: Context): Pair<Int, Int> {
+        val bounds = context.getSystemService(WindowManager::class.java).maximumWindowMetrics.bounds
+        return minOf(bounds.width(), bounds.height()) to maxOf(bounds.width(), bounds.height())
+    }
 
     suspend fun applyWallpaper(
         context: Context,
         imageUrl: String,
-        destination: WallpaperDestination
+        destination: WallpaperDestination,
+        crop: CropState
     ): Result<Unit> = withContext(Dispatchers.IO) {
+        var bitmap: Bitmap? = null
         try {
-            val wm = WallpaperManager.getInstance(context)
-            val displayMetrics = context.resources.displayMetrics
-            val desiredWidth = wm.desiredMinimumWidth
-            val desiredHeight = wm.desiredMinimumHeight
-
-            val targetWidth = if (desiredWidth > 0 && desiredHeight > 0) desiredWidth else displayMetrics.widthPixels
-            val targetHeight = if (desiredWidth > 0 && desiredHeight > 0) desiredHeight else displayMetrics.heightPixels
-
-            val imageLoader = context.applicationContext.imageLoader
-            val request = ImageRequest.Builder(context)
-                .data(imageUrl)
-                .size(targetWidth, targetHeight)
-                .scale(Scale.FILL)
-                .allowHardware(false)
-                .build()
-
-            val result = imageLoader.execute(request)
-            if (result !is SuccessResult) {
-                return@withContext Result.failure(IllegalStateException("Failed to download wallpaper image."))
-            }
-
-            val sourceBitmap = (result.drawable as? BitmapDrawable)?.bitmap
-                ?: return@withContext Result.failure(IllegalStateException("Failed to decode bitmap."))
-
-            val finalBitmap = cropToScreenAspectRatio(sourceBitmap, targetWidth, targetHeight)
+            val app = context.applicationContext
+            val file = fetchOriginal(app, imageUrl)
+            val (targetW, targetH) = targetSize(app)
+            bitmap = decodeCrop(file, crop, targetW, targetH)
 
             val flags = when (destination) {
                 WallpaperDestination.HOME -> WallpaperManager.FLAG_SYSTEM
                 WallpaperDestination.LOCK -> WallpaperManager.FLAG_LOCK
                 WallpaperDestination.BOTH -> WallpaperManager.FLAG_SYSTEM or WallpaperManager.FLAG_LOCK
             }
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                wm.setBitmap(finalBitmap, null, true, flags)
-            } else {
-                wm.setBitmap(finalBitmap)
-            }
-
-            // Recycle only bitmaps this function created, never the Coil-owned source bitmap
-            if (finalBitmap !== sourceBitmap && !finalBitmap.isRecycled) {
-                finalBitmap.recycle()
-            }
-
+            WallpaperManager.getInstance(app).setBitmap(bitmap, null, true, flags)
             Result.success(Unit)
         } catch (e: CancellationException) {
             throw e
@@ -72,34 +57,79 @@ object WallpaperManagerHelper {
             Result.failure(IllegalStateException("This image is too large for your device"))
         } catch (e: Exception) {
             Result.failure(e)
+        } finally {
+            bitmap?.recycle() // we created it, Coil is not involved any more
         }
     }
 
-    private fun cropToScreenAspectRatio(source: Bitmap, targetWidth: Int, targetHeight: Int): Bitmap {
-        val targetAspect = targetWidth.toFloat() / targetHeight.toFloat()
-        val sourceAspect = source.width.toFloat() / source.height.toFloat()
-
-        val cropWidth: Int
-        val cropHeight: Int
-        val cropX: Int
-        val cropY: Int
-
-        if (sourceAspect > targetAspect) {
-            cropHeight = source.height
-            cropWidth = (source.height * targetAspect).toInt().coerceAtMost(source.width)
-            cropX = (source.width - cropWidth) / 2
-            cropY = 0
-        } else {
-            cropWidth = source.width
-            cropHeight = (source.width / targetAspect).toInt().coerceAtMost(source.height)
-            cropX = 0
-            cropY = (source.height - cropHeight) / 2
+    /** Downloads the original (uncropped) file and returns a content:// uri the system picker can read. */
+    suspend fun prepareForSystemPicker(context: Context, imageUrl: String): Result<Uri> =
+        withContext(Dispatchers.IO) {
+            try {
+                val app = context.applicationContext
+                val file = fetchOriginal(app, imageUrl)
+                Result.success(FileProvider.getUriForFile(app, "${app.packageName}.fileprovider", file))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
         }
 
-        return if (cropWidth == source.width && cropHeight == source.height) {
-            source
-        } else {
-            Bitmap.createBitmap(source, cropX, cropY, cropWidth, cropHeight)
+    /** Blocking. Call from Dispatchers.IO. Reuses the file if it is already cached. */
+    private fun fetchOriginal(context: Context, url: String): File {
+        val dir = File(context.cacheDir, CACHE_DIR).apply { mkdirs() }
+        val name = url.substringBefore('?').substringAfterLast('/')
+            .replace(Regex("[^A-Za-z0-9._-]"), "_")
+            .ifEmpty { "image" }
+        val file = File(dir, name)
+        if (file.length() > 0) return file
+
+        val part = File(dir, "$name.part")
+        try {
+            val client = (context as? LuminaApp)?.okHttpClient ?: OkHttpClient()
+            client.newCall(Request.Builder().url(url).build()).execute().use { response ->
+                if (!response.isSuccessful) throw IOException("Failed to download image: HTTP ${response.code}")
+                val body = response.body ?: throw IOException("Empty response body")
+                body.byteStream().use { input -> part.outputStream().use { output -> input.copyTo(output) } }
+            }
+            if (!part.renameTo(file)) throw IOException("Could not save image")
+        } finally {
+            part.delete() // only does something when the download or rename failed
+        }
+        return file
+    }
+
+    /** Decodes only the chosen part of the file, sized to exactly targetW x targetH. */
+    private fun decodeCrop(file: File, crop: CropState, targetW: Int, targetH: Int): Bitmap {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(file.path, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) throw IOException("Could not read the image")
+
+        val r = computeCropRect(bounds.outWidth, bounds.outHeight, targetW.toFloat() / targetH, crop)
+        var sample = 1
+        while (r.width / (sample * 2) >= targetW && r.height / (sample * 2) >= targetH) sample *= 2
+
+        val decoder = BitmapRegionDecoder.newInstance(file.path)
+        try {
+            val region = decoder.decodeRegion(
+                Rect(r.left, r.top, r.left + r.width, r.top + r.height),
+                BitmapFactory.Options().apply { inSampleSize = sample }
+            ) ?: throw IOException("Could not decode the image")
+            if (region.width == targetW && region.height == targetH) return region
+            return Bitmap.createScaledBitmap(region, targetW, targetH, true).also {
+                if (it !== region) region.recycle()
+            }
+        } finally {
+            decoder.recycle()
+        }
+    }
+
+    /** Drops downloaded originals older than 24 hours. Safe to call on any thread. */
+    fun clearOldCache(context: Context) {
+        thread {
+            val cutoff = System.currentTimeMillis() - MAX_CACHE_AGE_MS
+            File(context.cacheDir, CACHE_DIR).listFiles()?.forEach { if (it.lastModified() < cutoff) it.delete() }
         }
     }
 }

@@ -18,6 +18,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Smartphone
+import androidx.compose.material.icons.outlined.Wallpaper
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -41,6 +42,7 @@ import com.example.domain.model.WallpaperDestination
 fun SetWallpaperBottomSheet(
     isApplying: Boolean,
     onDestinationSelected: (WallpaperDestination) -> Unit,
+    onSystemPickerSelected: () -> Unit,
     onDismissRequest: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -89,7 +91,7 @@ fun SetWallpaperBottomSheet(
                     )
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
-                        text = "Cropping and applying wallpaper…",
+                        text = "Preparing wallpaper…",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -129,6 +131,19 @@ fun SetWallpaperBottomSheet(
                     onClick = {
                         view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
                         onDestinationSelected(WallpaperDestination.BOTH)
+                    }
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                DestinationRowItem(
+                    title = "System wallpaper picker",
+                    subtitle = "Use your phone's own crop screen (varies by device)",
+                    icon = Icons.Outlined.Wallpaper,
+                    testTag = "destination_system",
+                    onClick = {
+                        view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+                        onSystemPickerSelected()
                     }
                 )
 

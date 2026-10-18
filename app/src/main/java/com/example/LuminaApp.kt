@@ -4,6 +4,7 @@ import android.app.Application
 import com.example.data.db.WallpaperDatabase
 import com.example.data.repository.WallpaperRepository
 import com.example.data.repository.WallhavenWallpaperRepository
+import com.example.util.WallpaperManagerHelper
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import java.util.concurrent.TimeUnit
@@ -38,5 +39,6 @@ class LuminaApp : Application() {
             wallpaperDao = database.wallpaperDao(),
             okHttpClient = okHttpClient
         )
+        WallpaperManagerHelper.clearOldCache(this)
     }
 }

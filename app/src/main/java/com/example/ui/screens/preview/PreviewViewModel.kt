@@ -1,12 +1,14 @@
 package com.example.ui.screens.preview
 
 import android.content.Context
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.data.repository.WallpaperRepository
 import com.example.domain.model.Wallpaper
 import com.example.domain.model.WallpaperDestination
+import com.example.util.CropState
 import com.example.util.ImageDownloader
 import com.example.util.WallpaperManagerHelper
 import kotlinx.coroutines.Job
@@ -30,6 +32,7 @@ data class PreviewUiState(
 
 sealed interface PreviewEvent {
     data class ShowSnackbar(val message: String, val isError: Boolean = false) : PreviewEvent
+    data class OpenSystemPicker(val uri: Uri) : PreviewEvent
 }
 
 class PreviewViewModel(
@@ -90,16 +93,38 @@ class PreviewViewModel(
         }
     }
 
-    fun applyWallpaper(context: Context, destination: WallpaperDestination) {
+    fun openSystemPicker(context: Context) {
         val wp = _uiState.value.wallpaper ?: return
         val appContext = context.applicationContext
         viewModelScope.launch {
             _uiState.update { it.copy(isApplyingWallpaper = true) }
-            val urlToApply = wp.fullUrl
+            val result = WallpaperManagerHelper.prepareForSystemPicker(appContext, wp.fullUrl)
+            _uiState.update { it.copy(isApplyingWallpaper = false, showSetSheet = false) }
+
+            val uri = result.getOrNull()
+            if (uri != null) {
+                _events.send(PreviewEvent.OpenSystemPicker(uri))
+            } else {
+                _events.send(
+                    PreviewEvent.ShowSnackbar(
+                        "Could not prepare the image: ${result.exceptionOrNull()?.localizedMessage ?: "Unknown error"}",
+                        isError = true
+                    )
+                )
+            }
+        }
+    }
+
+    fun applyWallpaper(context: Context, destination: WallpaperDestination, crop: CropState) {
+        val wp = _uiState.value.wallpaper ?: return
+        val appContext = context.applicationContext
+        viewModelScope.launch {
+            _uiState.update { it.copy(isApplyingWallpaper = true) }
             val result = WallpaperManagerHelper.applyWallpaper(
                 context = appContext,
-                imageUrl = urlToApply,
-                destination = destination
+                imageUrl = wp.fullUrl,
+                destination = destination,
+                crop = crop
             )
             _uiState.update { it.copy(isApplyingWallpaper = false, showSetSheet = false) }
 
