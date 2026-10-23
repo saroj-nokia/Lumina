@@ -25,8 +25,12 @@ jobs:
           distribution: temurin
           java-version: "21"
 
-      # Accepts SDK licenses so Gradle can download the compileSdk platform it needs.
-      - uses: android-actions/setup-android@v3
+      # The runner already has the Android SDK. setup-android@v3 fails here because it asks for the
+      # removed "tools" package, so just accept the licenses so Gradle can download the platform it needs.
+      - name: Accept Android SDK licenses
+        run: |
+          set +o pipefail
+          yes | "$(ls -d "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager | head -1)" --licenses > /dev/null
 
       # The repo has no gradlew, so use the same Gradle version as gradle-wrapper.properties.
       - uses: gradle/actions/setup-gradle@v4
