@@ -10,7 +10,6 @@ import com.example.domain.model.Wallpaper
 import com.example.domain.model.WallpaperCategory
 import com.example.domain.model.WallpaperSorting
 import com.squareup.moshi.Moshi
-import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -29,9 +28,8 @@ class WallhavenWallpaperRepository(
     // LruCache holding at most 20 responses to respect 45 requests/minute rate limit
     private val memoryCache = LruCache<String, WallhavenResponse>(20)
 
-    private val moshi: Moshi = Moshi.Builder()
-        .addLast(KotlinJsonAdapterFactory())
-        .build()
+    // Every DTO has a KSP-generated adapter (@JsonClass), so no reflection (kotlin-reflect) is needed at startup.
+    private val moshi: Moshi = Moshi.Builder().build()
 
     private val apiService: WallhavenApiService = Retrofit.Builder()
         .baseUrl("https://wallhaven.cc/api/v1/")

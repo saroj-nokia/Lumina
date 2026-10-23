@@ -118,6 +118,11 @@ fun WallpaperGrid(
     }
 }
 
+// Same gradient on every card, so create it once.
+private val CardScrim = Brush.verticalGradient(
+    colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.65f))
+)
+
 @Composable
 fun WallpaperCard(
     wallpaper: Wallpaper,
@@ -133,6 +138,15 @@ fun WallpaperCard(
     // Aspect ratio: bound between 0.55 (tall portrait) and 0.85 to maintain aesthetic staggered look
     val cardAspectRatio = remember(wallpaper.aspectRatio) {
         wallpaper.aspectRatio.coerceIn(0.58f, 0.85f)
+    }
+
+    val context = LocalContext.current
+    // Built once per thumbnail instead of on every recomposition.
+    val thumbRequest = remember(wallpaper.thumbnailUrl) {
+        ImageRequest.Builder(context)
+            .data(wallpaper.thumbnailUrl)
+            .crossfade(300)
+            .build()
     }
 
     Surface(
@@ -158,10 +172,7 @@ fun WallpaperCard(
 
             // High performance AsyncImage with crossfade
             AsyncImage(
-                model = ImageRequest.Builder(LocalContext.current)
-                    .data(wallpaper.thumbnailUrl)
-                    .crossfade(300)
-                    .build(),
+                model = thumbRequest,
                 contentDescription = "Wallhaven wallpaper #${wallpaper.id}",
                 contentScale = ContentScale.Crop,
                 onSuccess = { isImageLoaded = true },
@@ -173,14 +184,7 @@ fun WallpaperCard(
                 modifier = Modifier
                     .fillMaxWidth()
                     .align(Alignment.BottomCenter)
-                    .background(
-                        Brush.verticalGradient(
-                            colors = listOf(
-                                Color.Transparent,
-                                Color.Black.copy(alpha = 0.65f)
-                            )
-                        )
-                    )
+                    .background(CardScrim)
                     .padding(horizontal = 10.dp, vertical = 8.dp)
             ) {
                 Row(

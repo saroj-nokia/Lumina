@@ -21,7 +21,7 @@ abstract class WallpaperDatabase : RoomDatabase() {
                     WallpaperDatabase::class.java,
                     "lumina_wallpapers.db"
                 )
-                    .fallbackToDestructiveMigration()
+                    .fallbackToDestructiveMigration(dropAllTables = true)
                     .build()
                 INSTANCE = instance
                 instance

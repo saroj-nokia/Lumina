@@ -70,6 +70,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
+import coil.request.CachePolicy
 import coil.request.ImageRequest
 import com.example.domain.model.Wallpaper
 import com.example.ui.components.FloatingWallpaperToolbar
@@ -86,6 +87,9 @@ import com.example.util.freeSpaceFraction
 import com.example.util.panCrop
 import com.example.util.zoomCrop
 import kotlinx.coroutines.delay
+import kotlin.math.roundToInt
+
+private const val MAX_DECODE_SIDE = 4096f
 
 private val CropStateSaver = listSaver<CropState, Float>(
     save = { listOf(it.zoom, it.centerX, it.centerY) },
@@ -229,11 +233,22 @@ fun PreviewScreen(
                     val scale = boxSize.width / baseWidth
                     val density = LocalDensity.current
 
-                    AsyncImage(
-                        model = ImageRequest.Builder(context)
+                    // Decode at most MAX_DECODE_SIDE px on the long side, and keep this big bitmap out of the
+                    // memory cache so it does not push the grid thumbnails out.
+                    val fullImageRequest = remember(wallpaper.fullUrl, srcW, srcH, scale) {
+                        val w = srcW * scale
+                        val h = srcH * scale
+                        val shrink = minOf(1f, MAX_DECODE_SIDE / maxOf(w, h))
+                        ImageRequest.Builder(context)
                             .data(wallpaper.fullUrl)
+                            .size((w * shrink).roundToInt(), (h * shrink).roundToInt())
+                            .memoryCachePolicy(CachePolicy.DISABLED)
                             .crossfade(400)
-                            .build(),
+                            .build()
+                    }
+
+                    AsyncImage(
+                        model = fullImageRequest,
                         contentDescription = "Wallpaper #${wallpaper.id}",
                         contentScale = ContentScale.FillBounds,
                         onSuccess = { isHighResLoaded = true },
