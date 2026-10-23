@@ -1,0 +1,64 @@
+name: Android CI
+
+on:
+  push:
+    branches: [main, crop-and-preview-fixes]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      # Accepts SDK licenses so Gradle can download the compileSdk platform it needs.
+      - uses: android-actions/setup-android@v3
+
+      # The repo has no gradlew, so use the same Gradle version as gradle-wrapper.properties.
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.3.1"
+
+      # debug.keystore is git-ignored but app/build.gradle.kts points at it.
+      # Each run signs with a fresh key, so uninstall an older Lumina before installing this APK.
+      - name: Create debug keystore
+        run: >
+          keytool -genkeypair -keystore debug.keystore -storepass android
+          -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048
+          -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+
+      - name: Build debug APK
+        run: gradle assembleDebug --stacktrace
+
+      - name: Unit tests
+        run: gradle testDebugUnitTest --stacktrace
+
+      - name: Upload APK
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lumina-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: ignore
+
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: app/build/reports/tests
+          if-no-files-found: ignore
